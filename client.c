@@ -35,9 +35,12 @@ int main(int argc, char **argv)
 		printf("Enter any vm number from 1-10 you want for server \n");
 		scanf("%d",&svm);
 		printf("You entered vm%d for server \n",svm);
-		if( svm<1 && svm>10){
-			printf("Please enter vm number between 1-10 \n");
-		}
+       
+        if( svm<1 || svm>10){
+            printf("Wrong input entered. Enter vm number between 1-10 \n");
+            continue;
+        }
+        
 		
 		//get client vm 
 		gethostname(clientvm, sizeof clientvm);

@@ -9,6 +9,8 @@
 #define RREQ 0
 #define RREP 1
 #define DATA 2
+#define FORWARD 0
+#define REVERSE 1
 
 //#define MAXLINE 1024
 
@@ -34,6 +36,75 @@ struct clientbuffer{
 struct Eth_Frame_Header ethframehdr,*ptrethframehdr_send,*ptrethframehdr_rcv;
 struct Eth_Frame_Payload ethpayload,*ptrethpayload_send,*ptrethpayload_rcv;
 
+
+
+
+void print_routingtable(int index)
+{
+
+            
+    printf("\n Destination Canonical IP : %s\n",routing_table[index].destination_IP);
+    printf("\n Broadcast ID at source index : %d\n",routing_table[index].broadcastID[index]);
+    printf("\n Broadcast ID at destination Index: %d\n",routing_table[client_buffer.destination_index-1].broadcastID[index]);
+    printf("\n Number of Hops : %d\n",routing_table[index].number_hops);
+    printf("\n Next Hop mac address : %x\n",routing_table[index].next_hop);
+    //printf("\n$$$$$$$$$$$ Next Hop mac address : %x\n",rcv_pkt_addr.sll_addr[2]);
+    printf("\n Outgoing Index : %d\n",routing_table[index].outgoing_index);
+    printf("\n Current Time Stamp : %lu\n",routing_table[index].time_stamp);
+    
+    
+}
+
+
+int add_routing_table(struct sockaddr_ll rcv_pkt_addr,int fwd_rev)
+{
+    int index;
+    int i;
+    struct timeval tv;
+    char source_macaddr[8];
+    
+    
+    if(fwd_rev==REVERSE) //Reverse Path Construction
+    {
+        index=client_buffer.source_index-1;
+        strcpy(routing_table[index].destination_IP,ptrethframehdr_rcv->SrcCanonicalIP);
+        routing_table[index].broadcastID[index]=ptrethframehdr_rcv->broadcastID; // Storing the broadcast ID at Source entry in the routing table in the Source index array
+        routing_table[client_buffer.destination_index-1].broadcastID[index]=ptrethframehdr_rcv->broadcastID; // Storing the broadcast ID at Destination entry in the routing table in the Source index array
+        routing_table[index].number_hops=ptrethframehdr_rcv->hopCount;
+        
+        printf("\n$$$$$$$$$$$ Next Hop mac address\n");
+        
+        for(i=0;i<6;i++)
+        {
+            source_macaddr[i]=rcv_pkt_addr.sll_addr[i] & 0xff;
+            //printf("%.2x:",source_macaddr[i]);
+        }
+        source_macaddr[7]=0x00;
+        source_macaddr[6]=0x00;
+        strcpy(routing_table[index].next_hop,source_macaddr);
+       
+        routing_table[index].outgoing_index=rcv_pkt_addr.sll_ifindex;
+        gettimeofday(&tv, NULL);
+        routing_table[index].time_stamp=tv.tv_sec;
+        
+        printf("\n Adding Data to Routing Table \n");
+        print_routingtable(index);
+        
+    }
+    
+//    else if(fwd_rev==FORWARD) //Forward Path Construction
+//    {
+//        
+//         index=client_buffer.destination_index-1;
+//        strcpy(routing_table[index].destination_IP,ptrethframehdr_rcv->DestCanonicalIP);
+//       
+//    }
+//        
+    
+                                          
+    return 0;
+    
+}
 
 
 int prhwaddrs()
@@ -146,27 +217,6 @@ int initialRREQ(int packet_socket,int skip_index)
             strcpy(ptrethframehdr_send->SrcCanonicalIP,client_buffer.sourceCanonicalIP);
 
             int send_result = 0;
-            
-            /*Updating the index of source and client*/
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
             
 
             /*other host MAC address*/
@@ -379,10 +429,12 @@ int checkRoute(char destIP[])
 }
 
 
-void rreq(int skip_index,void* buffer,int packet_socket){
-
+void rreq( struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket){
+    
+    int skip_index=rcv_pkt_addr.sll_ifindex;
+    
 		if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP)==0)
-            {
+        {       add_routing_table(rcv_pkt_addr,REVERSE);
                 printf("\n No Route found to destination. Propogating RREQ \n");
                 floodRREQ(buffer,packet_socket,skip_index);
             }
@@ -522,6 +574,7 @@ int main (int argc, char **argv)
             ptrethpayload_rcv = (buffer + sizeof(struct Eth_Frame_Header));
             int length = 0; /*length of the received frame*/
             length = recvfrom(packet_socket, buffer, ETH_FRAME_LEN, 0,(struct sockaddr*)&rcv_pkt_addr,&rcvlen);
+            
             if (length == -1)
             {
                 printf("receive error %d",errno);
@@ -567,7 +620,7 @@ int main (int argc, char **argv)
          
 			if(ptrethframehdr_rcv->datatype == 0){
 					printf("\n RREQ received \n");
-					rreq(rcv_pkt_addr.sll_ifindex,buffer,packet_socket);
+					rreq(rcv_pkt_addr,buffer,packet_socket);
 			}
 			else if(ptrethframehdr_rcv->datatype == 1){
 					printf("\n RREP received \n");

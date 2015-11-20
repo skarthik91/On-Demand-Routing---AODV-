@@ -11,6 +11,8 @@
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
 #include <linux/if_arp.h>
+#include <sys/time.h>
+#include <ctype.h>
 
 #include <limits.h>	/* for PATH_MAX */
 #include <sys/unistd.h>
@@ -49,7 +51,7 @@ struct Eth_Frame_Payload{
 
 struct Routing_Table{
 	char destination_IP[16];
-	char next_hop[6];
+	char next_hop[8];
 	int  outgoing_index; 
 	int  number_hops;
 	time_t   time_stamp;
