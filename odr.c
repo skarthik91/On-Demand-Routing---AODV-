@@ -431,7 +431,7 @@ int main (int argc, char **argv)
     int packet_socket = socket(PF_PACKET, SOCK_RAW, htons(PROTOCOL));
     if (packet_socket == -1)
     {
-        printf("error in creating PF_Packet socket \n");
+        printf("error in creating pf_packet socket \n");
     }
     
     //creating unix domain socket
