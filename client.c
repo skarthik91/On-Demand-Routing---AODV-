@@ -44,11 +44,11 @@ int main(int argc, char **argv)
 		
 		//get client vm 
 		gethostname(clientvm, sizeof clientvm);
-		printf("clientvm: %s\n", clientvm);
+		//printf("clientvm: %s\n", clientvm);
 		
 		sprintf(servervm,"vm%d",svm);
 		fflush(stdout);
-		printf("servervm : %s \n",servervm);
+		//printf("servervm : %s \n",servervm);
 		
 		
 		//char **pptr;
@@ -66,8 +66,8 @@ int main(int argc, char **argv)
 		//printf ("official hostname: %s\n", he->h_name);
 		inet_ntop(he->h_addrtype,*ip,DestCanonicalIP,sizeof(DestCanonicalIP));
 		//strncpy(DestCanonicalIP, he->h_name, sizeof(DestCanonicalIP) - 1); 
-		printf("destination canonical ip : %s \n",DestCanonicalIP);
-		printf("client node at %s sending request to server at %s \n",clientvm,servervm);
+		printf("Destination canonical ip : %s \n",DestCanonicalIP);
+		printf("Client node at %s sending request to server at %s \n",clientvm,servervm);
 		
 		//sending message to server
 		msg_send(sockfd,DestCanonicalIP,SERVERPORT,msgtosend,routeflag);
