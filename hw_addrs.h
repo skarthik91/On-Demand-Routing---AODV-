@@ -40,6 +40,7 @@ struct Eth_Frame_Header{
     uint16_t broadcastID; //should be set to 0 only for RREP and Data Payload
     uint16_t hopCount;
     uint8_t  forcediscovery;
+    uint8_t  RREPsentflag;
     uint8_t	 payloadlen;//Payload length (excluding FRAME_HEADER size)
 	char     DestCanonicalIP[16];
     char     SrcCanonicalIP[16];
