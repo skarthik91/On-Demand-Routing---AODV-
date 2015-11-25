@@ -101,7 +101,7 @@ int add_routing_table(struct sockaddr_ll rcv_pkt_addr,int fwd_rev)
         
         routing_table[index].outgoing_index=rcv_pkt_addr.sll_ifindex;
         gettimeofday(&tv, NULL);
-        routing_table[index].time_stamp=tv.tv_sec;
+        routing_table[index].time_stamp=tv.tv_sec*(10^6)+tv.tv_usec;
         
         //strftime(timebuffer,30,"%m-%d-%Y  %T.",localtime(&routing_table[index].time_stamp));
         
@@ -251,7 +251,7 @@ int prhwaddrs()
     free_hwa_info(hwahead);
 }
 
-int initialRREQ(int packet_socket,int skip_index)
+int initialRREQ(int packet_socket,int skip_index,int forcediscovery)
 {
     int j;
     struct hwa_info	*hwa, *hwahead;
@@ -398,6 +398,7 @@ int floodRREQ(void* buffer, int packet_socket,int skip_index,int RREPsentflag)
             ptrethframehdr_send->hopCount=ptrethframehdr_rcv->hopCount;
             ptrethframehdr_send->hopCount++;
             ptrethframehdr_send->RREPsentflag=RREPsentflag;
+            ptrethframehdr_send->forcediscovery=ptrethframehdr_rcv->forcediscovery;
             int send_result = 0;
             
             /*other host MAC address*/
@@ -569,14 +570,43 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
     
     int skip_index=rcv_pkt_addr.sll_ifindex;
     
-    if(ptrethframehdr_rcv->RREPsentflag==1)
+    if(ptrethframehdr_rcv->forcediscovery==1)
+    {
+        printf("\n RREQ arrived with forced discovery bit set\n");
+        if(client_buffer.destination_index==client_buffer.odr_index)
+        {
+            printf(" I am the destination. Sending RREP in the forced discovery mode ");
+            add_routing_table(rcv_pkt_addr,REVERSE);
+            sendrrep(packet_socket);
+            
+            printf("\n Propogating the RREQ with RREP sent flag set");
+            floodRREQ(buffer,packet_socket,skip_index,1);
+            return 0;
+            
+        }
+        
+        else
+        {
+            printf("\nPropogating RREQ in the forced discovery mode\n");
+            add_routing_table(rcv_pkt_addr,REVERSE);
+            floodRREQ(buffer,packet_socket,skip_index, ptrethframehdr_rcv->RREPsentflag);
+            
+                
+        }
+        
+        
+        
+        
+    }
+    
+ else if(ptrethframehdr_rcv->RREPsentflag==1)
     {
         printf("\n RREQ received with RREP already sent flag at ODR vm %d set high. Client vm%d for destination vm%d Updating routing table and discarding RREQ \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
         add_routing_table(rcv_pkt_addr,REVERSE);
         return 0;
     }
     //Checking for broadcast ID
-    if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1] || routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1]==0)
+   else if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1] || routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1]==0)
     {
         printf("\n\n New RREQ received -  Updating routing table \n\n");
         add_routing_table(rcv_pkt_addr,REVERSE);
@@ -1348,7 +1378,30 @@ void senddata_server(int unixdomain_socket,char serverpayload[])
     // }
 	
 // }
+int check_stale(float stalenessT_out)
+{
+    
+    struct timeval tv1;
+    time_t time_now;
+    
+    gettimeofday(&tv1, NULL);
+    time_now=tv1.tv_sec*(10^6)+tv1.tv_usec;
+    
+    
+    
+    printf("\n Checking for staleness\n");
+    
+    if((time_now-stalenessT_out*(10^6))>=routing_table[client_buffer.destination_index-1].time_stamp) // Route is stale
+    {
+        return 1;
+    }
 
+    else
+    {
+        return 0; //Route not stale
+    }
+
+}
 
 int main (int argc, char **argv)
 {
@@ -1467,25 +1520,43 @@ int main (int argc, char **argv)
 				
 				
 				split_buffer(unixbuffer); // Function to split the buffer
+                
+                
 				
 				if(client_buffer.sourceCanonicalIP==client_buffer.destCanonicalIP)
 				{
 					printf(" \n Client is the destination. The buffer is %s",client_buffer.message);
 					continue;
 				}
+                
+                else if(client_buffer.flag==1) //Forced Rediscovery mode
+                {
+                    printf("\n Forced rediscovery mode \n Flooding RREQ on all interfaces to perform route rediscovery \n");
+                    initialRREQ(packet_socket,-10,client_buffer.flag);
+                    
+                }
 				
-				if(strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)==0)
+				else if(strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)==0)
 				{
-					printf("\n Route Found. Route Discovery not required. Sending Payload\n");
+                    if(check_stale(stalenessT_out)==1) // Checking for staleness.
+                    {
+                        printf("\n Route found but stale. Flooding RREQ on all interfaces to perform route discovery \n");
+                        initialRREQ(packet_socket,-10,client_buffer.flag);
+                    }
+                    
+                    else if(check_stale(stalenessT_out)==0)
+                    {
+					printf("\n Route Found and not stale. Route Discovery not required. Sending Payload\n");
 					send_payload(packet_socket);
 					continue;
+                    }
 					
 				}
 				
 				else if (strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)!=0)
 				{
-					printf("\n No Route found to destination. Flooding RREQ on all interfaces \n");
-					initialRREQ(packet_socket,-10);
+					printf("\n No Route found to destination. Flooding RREQ on all interfaces to perform route discovery \n");
+					initialRREQ(packet_socket,-10,client_buffer.flag);
 				}
             
 			
