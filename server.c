@@ -1,7 +1,7 @@
 #include "hw_addrs.h"
  
-#define SERVERPATH "/tmp/karthikeyan"
-#define ODR_PATH "/tmp/ashanatayal"
+#define SERVERPATH "/tmp/jack"
+#define ODR_PATH "/tmp/jill"
 
 int msg_rcv(int sockfd,char messagercvd[],char ClientCanonicalIP[],int *port)
 {

@@ -1,7 +1,7 @@
 #include "hw_addrs.h"
 
 //constants
-#define ODR_PATH "/tmp/ashanatayal"
+#define ODR_PATH "/tmp/jill"
 
 #define SERVERPORT 13854
 
@@ -50,7 +50,7 @@ int main(int argc, char **argv)
     bzero(&cliaddr, sizeof(cliaddr));   /* bind an address for us */
     cliaddr.sun_family = AF_LOCAL;
 
-	strcpy(cliaddr.sun_path,"/tmp/ashanaXXXXXX");	/* Copy template */
+	strcpy(cliaddr.sun_path,"/tmp/karthikXXXXXX");	/* Copy template */
 	fd = mkstemp(cliaddr.sun_path);			/* Create and open temp file */
 	unlink(cliaddr.sun_path);				/* Remove it */
 	close(fd);				/* Close file */

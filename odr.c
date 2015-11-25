@@ -5,8 +5,8 @@
 //constants
 #define PROTOCOL 562357
 #define SOURCEPORT 13855
-#define ODR_PATH "/tmp/ashanatayal"
-#define SERVERPATH "/tmp/karthikeyan"
+#define ODR_PATH "/tmp/jill"
+#define SERVERPATH "/tmp/jack"
 
 #define ETH_FRAME_LEN 1500
 #define RREQ 0
@@ -294,6 +294,8 @@ int initialRREQ(int packet_socket,int skip_index)
 			ptrethframehdr_send->destport = client_buffer.serverport;
             ptrethframehdr_send->hopCount=1;
             ptrethframehdr_send->forcediscovery=client_buffer.flag;
+            
+            ptrethframehdr_send->RREPsentflag=0;
             ptrethframehdr_send->payloadlen=100;
             strcpy(ptrethframehdr_send->DestCanonicalIP,client_buffer.destCanonicalIP);
             strcpy(ptrethframehdr_send->SrcCanonicalIP,client_buffer.sourceCanonicalIP);
@@ -360,7 +362,7 @@ int initialRREQ(int packet_socket,int skip_index)
 
 }
 
-int floodRREQ(void* buffer, int packet_socket,int skip_index)
+int floodRREQ(void* buffer, int packet_socket,int skip_index,int RREPsentflag)
 {
     
     int j;
@@ -395,7 +397,7 @@ int floodRREQ(void* buffer, int packet_socket,int skip_index)
             
             ptrethframehdr_send->hopCount=ptrethframehdr_rcv->hopCount;
             ptrethframehdr_send->hopCount++;
-            
+            ptrethframehdr_send->RREPsentflag=RREPsentflag;
             int send_result = 0;
             
             /*other host MAC address*/
@@ -567,6 +569,12 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
     
     int skip_index=rcv_pkt_addr.sll_ifindex;
     
+    if(ptrethframehdr_rcv->RREPsentflag==1)
+    {
+        printf("\n RREQ received with RREP already sent flag at ODR vm %d set high. Client vm%d for destination vm%d Updating routing table and discarding RREQ \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+        add_routing_table(rcv_pkt_addr,REVERSE);
+        return 0;
+    }
     //Checking for broadcast ID
     if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1] || routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1]==0)
     {
@@ -579,6 +587,9 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
             printf("\n Route to Destination found at ODR vm%d. Sending RREP to client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
             add_routing_table(rcv_pkt_addr,REVERSE);
             sendrrep(packet_socket);
+            
+            printf("\n Propogating the RREQ with RREP sent flag set");
+            floodRREQ(buffer,packet_socket,skip_index,1);
             return 1;
         }
         
@@ -587,7 +598,7 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
         {
             printf("\n No Route found to destination. Flooding RREQ at ODR vm%d for client vm%d and destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
             add_routing_table(rcv_pkt_addr,REVERSE);
-            floodRREQ(buffer,packet_socket,skip_index);
+            floodRREQ(buffer,packet_socket,skip_index, ptrethframehdr_rcv->RREPsentflag);
             
             return 0;
         }
@@ -609,6 +620,8 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
                 printf("\n Route to Destination found at ODR vm%d. Sending RREP to client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
                 add_routing_table(rcv_pkt_addr,REVERSE);
                 sendrrep(packet_socket);
+                printf("\n Propogating the RREQ with RREP sent flag set");
+                floodRREQ(buffer,packet_socket,skip_index,1);
                 return 1;
             }
             
@@ -617,7 +630,7 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
             {
                 printf("\n No Route found to destination. Flooding RREQ at ODR vm%d for client vm%d and destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
                 add_routing_table(rcv_pkt_addr,REVERSE);
-                floodRREQ(buffer,packet_socket,skip_index);
+                floodRREQ(buffer,packet_socket,skip_index,ptrethframehdr_rcv->RREPsentflag);
                 
                 return 0;
             }
