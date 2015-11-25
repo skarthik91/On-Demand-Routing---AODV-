@@ -41,7 +41,8 @@ struct Eth_Frame_Header ethframehdr,*ptrethframehdr_send,*ptrethframehdr_rcv;
 struct Eth_Frame_Payload ethpayload,*ptrethpayload_send,*ptrethpayload_rcv;
 void send_payload(int);
 int get_index(char*);
-
+int checkRoute(char [],struct sockaddr_ll ,int);
+int check_rreq(struct sockaddr_ll ,void* ,int );
 
 void print_routingtable(int index)
 {
@@ -104,7 +105,7 @@ int add_routing_table(struct sockaddr_ll rcv_pkt_addr,int fwd_rev)
         
         printf("\n Routing Table - Reverse Path Construction \n");
         print_routingtable(index);
-       // printf("\n Time of adding entry to table %ld\n",tv.tv_usec);
+        // printf("\n Time of adding entry to table %ld\n",tv.tv_usec);
         
     }
     
@@ -139,11 +140,46 @@ int add_routing_table(struct sockaddr_ll rcv_pkt_addr,int fwd_rev)
         
         printf("\ Routing Table---- Forward Path Construction \n");
         print_routingtable(index);
-       // printf("\n Time of adding entry to table %ld\n",tv.tv_usec);
+        // printf("\n Time of adding entry to table %ld\n",tv.tv_usec);
         
     }
     
-    
+    else if(fwd_rev==DATA) // FREE RREP
+    {
+        
+        index=client_buffer.source_index-1;
+        strcpy(routing_table[index].destination_IP,ptrethframehdr_rcv->SrcCanonicalIP);
+   
+        
+        routing_table[index].number_hops=ptrethframehdr_rcv->hopCount;
+        
+        
+        
+        for(i=0;i<6;i++)
+        {
+            routing_table[index].next_hop[i]=rcv_pkt_addr.sll_addr[i] & 0xff;
+            
+        }
+        
+        printf("\n");
+        routing_table[index].next_hop[7]=0x00;
+        routing_table[index].next_hop[6]=0x00;
+        
+        
+        routing_table[index].outgoing_index=rcv_pkt_addr.sll_ifindex;
+        gettimeofday(&tv, NULL);
+        routing_table[index].time_stamp=tv.tv_sec;
+        
+        //strftime(timebuffer,30,"%m-%d-%Y  %T.",localtime(&routing_table[index].time_stamp));
+        
+        
+        printf("\n Routing Table - Reverse Path Construction \n");
+        print_routingtable(index);
+        // printf("\n Time of adding entry to table %ld\n",tv.tv_usec);
+        
+        
+        
+    }
     
     return 0;
     
@@ -447,6 +483,8 @@ void split_buffer(char unixbuffer[])
     //printf("\n Message received is %s \n",msgrcvd[1]);
     
     inet_pton(AF_INET,msgrcvd[1], &ipv4addr);
+    
+    //memset(he,0,sizeof(he));
     he = gethostbyaddr(&ipv4addr, sizeof ipv4addr, AF_INET);
     
     printf("Server name: %s\n",he->h_name);
@@ -536,53 +574,109 @@ int get_index(char* vm_string)
     
     
 }
+
+int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
+{
+    
+    int skip_index=rcv_pkt_addr.sll_ifindex;
+    
+    //Checking for broadcast ID
+    if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1] || routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1]==0)
+    {
+        printf("\n\n New RREQ received -  Updating routing table \n\n");
+        add_routing_table(rcv_pkt_addr,REVERSE);
+        
+        
+        if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==1) // Route to destination found . Add routing table and send RREP
+        {
+            printf("\n Route to Destination found at ODR vm%d. Sending RREP to client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+            add_routing_table(rcv_pkt_addr,REVERSE);
+            sendrrep(packet_socket);
+            return 1;
+        }
+        
+        
+        else if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==0)
+        {
+            printf("\n No Route found to destination. Flooding RREQ at ODR vm%d for client vm%d and destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+            add_routing_table(rcv_pkt_addr,REVERSE);
+            floodRREQ(buffer,packet_socket,skip_index);
+            
+            return 0;
+        }
+        
+    }
+    
+    else if(ptrethframehdr_rcv->broadcastID <= routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1])
+    {
+        
+        printf("\n Out of place broadcast ID arrived. Checking if it has lower hop count at vm%d from client vm%d at destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+        
+        
+        //Check for hop count condition for effiecent path
+        if(ptrethframehdr_rcv->hopCount<routing_table[client_buffer.source_index-1].number_hops || routing_table[client_buffer.source_index-1].number_hops==0)
+        {
+            printf("\n RREQ has out of place broadcast ID but better hopcount - Updating routing table \n");
+            if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==1) // Route to destination found . Add routing table and send RREP
+            {
+                printf("\n Route to Destination found at ODR vm%d. Sending RREP to client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+                add_routing_table(rcv_pkt_addr,REVERSE);
+                sendrrep(packet_socket);
+                return 1;
+            }
+            
+            
+            else if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==0)
+            {
+                printf("\n No Route found to destination. Flooding RREQ at ODR vm%d for client vm%d and destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+                add_routing_table(rcv_pkt_addr,REVERSE);
+                floodRREQ(buffer,packet_socket,skip_index);
+                
+                return 0;
+            }
+            
+            
+        }
+        
+        else
+        {
+            printf("\n Inefficient path and out of place broadcast ID packet  RREQ arrived. Discarding Packet \n");
+            return 0;
+        }
+        
+        
+    }
+    
+    
+}
+
+
+
 //Checking for a path
 int checkRoute(char destIP[],struct sockaddr_ll rcv_pkt_addr,int packet_socket)
 {
     int i;
-    char odrvm[4];
+    char odrvm[5];
     char vm_string[2];
     
-    
+    memset(odrvm,0,sizeof(odrvm));
     gethostname(odrvm, sizeof odrvm);
     printf("odrvm: %s\n", odrvm);
     
     
-    
-    //    if(strcmp((odrvm),"vm10")==0)
-    //        client_buffer.odr_index=10;
-    //
-    //    else{
-    //
-    //        strncpy(vm_string, odrvm + 2,1);
-    //        //printf("\n Client VM string is %s \n",vm_string);
-    //        client_buffer.odr_index=atoi(vm_string);
-    //    }
-    //
-    
-    
-    
+    //Loading ODR index
     client_buffer.odr_index=get_index(odrvm);
     printf("\n ODR index is %d \n",client_buffer.odr_index);
     
     
     //Check if the ODR itself is the server
     
-    //    if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.source_index-1].broadcastID[client_buffer.source_index-1])
-    //    {
-    //        printf("\n\n New RREQ received -  Updating routing table \n\n");
-    //        return 2;
-    //
-    //    }
-    
-    
-    
     if(client_buffer.odr_index==client_buffer.destination_index)
     {
         add_routing_table(rcv_pkt_addr,REVERSE);
         //Updating Destination Routing Table.
-        strcpy(routing_table[client_buffer.odr_index-1].destination_IP,destIP);
-        printf("\n I am the destination. Sending RREP .  \n"); //$$$$$$$$$$ To complete this
+        //strcpy(routing_table[client_buffer.odr_index-1].destination_IP,destIP);
+        printf("\n I, vm%d am the destination. Sending RREP to vm%d.  \n",client_buffer.odr_index,client_buffer.source_index); //$$$$$$$$$$ To complete this
         return 1;
     }
     
@@ -590,8 +684,9 @@ int checkRoute(char destIP[],struct sockaddr_ll rcv_pkt_addr,int packet_socket)
     {
         if(strcmp(destIP,routing_table[i].destination_IP) == 0)
         {
+            add_routing_table(rcv_pkt_addr,REVERSE);
             table_index=i;  //Setting table index
-            printf("\n Route to destination found and intermediate ODR - sending RREP\n");
+            printf("\n Route to destination found in intermediate ODR - sending RREP\n");
             return 1;
         }
     }
@@ -601,39 +696,7 @@ int checkRoute(char destIP[],struct sockaddr_ll rcv_pkt_addr,int packet_socket)
     
 }
 
-int newRREQ()
-{
-    int index=client_buffer.source_index-1;
-    if(ptrethframehdr_rcv->broadcastID > routing_table[index].broadcastID[index])
-    {
-        printf("\n\n New RREQ received -  Updating routing table \n\n");
-        return 1;
-        
-    }
-    
-    if(ptrethframehdr_rcv->broadcastID <= routing_table[index].broadcastID[index])
-    {
-        //Check for hop count condition for effiecent path
-        if(ptrethframehdr_rcv->hopCount<routing_table[index].number_hops || routing_table[index].number_hops==0)
-        {
-            printf("\n Path found with better hop count - Updating routing table \n");
-            return 1;
-            
-        }
-        
-        else
-        {
-            printf("\n Inefficient path RREQ arrived. Discarding Packet \n");
-            return 0;
-        }
-        
-        
-    }
-    
-    
-     return 0;
-    
-}
+
 
 int relay_rrep(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
 {
@@ -734,8 +797,8 @@ int relay_rrep(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
             memcpy((void*)(buffer+ETH_ALEN), (void*)src_mac, ETH_ALEN);
             
             strcpy(ptrethpayload_send->payload,client_buffer.message);
-            
-            printf("sending relay RREP buffer : %s\n",ptrethpayload_send->payload);
+            add_routing_table(rcv_pkt_addr,FORWARD);
+            printf("sending relay for client index vm%d from destination index vm%d at odr index vm %d RREP buffer : %s\n",client_buffer.source_index,client_buffer.destination_index,client_buffer.odr_index,ptrethpayload_send->payload);
             /*send the packet*/
             send_result = sendto(packet_socket, buffer, ETH_FRAME_LEN, 0,
                                  (struct sockaddr*)&socket_address, sizeof(socket_address));
@@ -751,7 +814,7 @@ int relay_rrep(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
         }
     }
     
-    add_routing_table(rcv_pkt_addr,FORWARD);
+    
     
     
     return 0;
@@ -880,43 +943,7 @@ void sendrrep(int packet_socket)
 
 
 
-int rreq( struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
-{
-    
-    int skip_index=rcv_pkt_addr.sll_ifindex;
-    
-    if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==2)
-    {
-        add_routing_table(rcv_pkt_addr,REVERSE);
-        
-        floodRREQ(buffer,packet_socket,skip_index);
-        return 0;
-    }
-    
-    
-    if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==1)
-    {
-        printf("\n Route to Destination found. Sending RREP \n");
-        sendrrep(packet_socket);
-        return 0;
-    }
-    
-    
-    else if(checkRoute(ptrethframehdr_rcv->DestCanonicalIP,rcv_pkt_addr,packet_socket)==0)
-    {
-        printf("\n No Route found to destination \n");
-        if(newRREQ()==1) // Better RREQ received
-        {
-            add_routing_table(rcv_pkt_addr,REVERSE);
-            
-            floodRREQ(buffer,packet_socket,skip_index);
-        }
-        
-        return 0;
-    }
-    
-    return 0;
-}
+
 
 void print_ethernetframe(int length)
 {
@@ -1187,7 +1214,7 @@ void send_payload(int packet_socket)
         }
     }
     return 0;
- }
+}
 
 
 int main (int argc, char **argv)
@@ -1197,7 +1224,7 @@ int main (int argc, char **argv)
     struct hostent *he,*he1;
     char unixbuffer[MAXLINE];
     int maxfdp,nready,unix_data;
-    char clientodrvm[4];
+    char clientodrvm[5];
     fd_set rset;
     char vm_string[2],vm_string1[2];
     char **ip;
@@ -1205,6 +1232,10 @@ int main (int argc, char **argv)
     struct sockaddr_ll temp;
     char mesg[MAXLINE];
     void* buffer;
+    char temp_string1[4],temp_string2[4];
+    
+    char odrvm1[5];
+    
     
     client_buffer.broadcast=0;
     
@@ -1274,6 +1305,8 @@ int main (int argc, char **argv)
             }
             printf("received data %s \n" , unixbuffer);
             client_buffer.broadcast++;
+            
+            memset(clientodrvm,0,sizeof(clientodrvm));
             gethostname(clientodrvm, sizeof clientodrvm);
             printf("\n clientodrvm: %s\n", clientodrvm);
             
@@ -1290,6 +1323,8 @@ int main (int argc, char **argv)
             client_buffer.source_index=get_index(clientodrvm);
             printf("\n Client index is %d \n",client_buffer.source_index);
             //get client odr canonical IP address
+            
+            
             he = gethostbyname(clientodrvm);
             if (he == NULL) { // do some error checking
                 herror("gethostbyname");
@@ -1300,22 +1335,23 @@ int main (int argc, char **argv)
             printf("\n source Canonical IP : %s \n",inet_ntop(he->h_addrtype,*ip,client_buffer.sourceCanonicalIP,sizeof(client_buffer.sourceCanonicalIP)));
             
             
-            split_buffer(unixbuffer);
+            split_buffer(unixbuffer); // Function to split the buffer
             
             if(client_buffer.sourceCanonicalIP==client_buffer.destCanonicalIP)
             {
-                printf(" \n I am the destination. The buffer is %s",client_buffer.message);
+                printf(" \n Client is the destination. The buffer is %s",client_buffer.message);
                 continue;
             }
             
-            if(strcmp(routing_table[client_buffer.source_index-1].destination_IP,client_buffer.destCanonicalIP)==0)
+            if(strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)==0)
             {
                 printf("\n Route Found. Route Discovery not required. Sending Payload\n");
                 send_payload(packet_socket);
+                continue;
                 
             }
             
-            else if (strcmp(routing_table[client_buffer.source_index-1].destination_IP,client_buffer.destCanonicalIP)!=0)
+            else if (strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)!=0)
             {
                 printf("\n No Route found to destination. Flooding RREQ on all interfaces \n");
                 initialRREQ(packet_socket,-10);
@@ -1348,9 +1384,19 @@ int main (int argc, char **argv)
             }
             
             
+            memset(odrvm1,0,sizeof(odrvm1));
+            gethostname(odrvm1, sizeof odrvm1);
+            printf("odrvm: %s\n", odrvm1);
+            
+            
+            //Loading ODR index
+            client_buffer.odr_index=get_index(odrvm1);
+            printf("\n ODR index is %d \n",client_buffer.odr_index);
+            
             strcpy(mesg,ptrethpayload_rcv->payload);
             
-            printf("\n Printing MESSAGE  %s$$$$$$$$$$ \n\n",mesg);
+            printf("\n Printing MESSAGE on arrival of packet at ODR %s$$$$$$$$$$ \n\n",mesg);
+            
             //Loading Client buffer
             strcpy(client_buffer.destCanonicalIP,ptrethframehdr_rcv->DestCanonicalIP);
             strcpy(client_buffer.sourceCanonicalIP,ptrethframehdr_rcv->SrcCanonicalIP);
@@ -1358,25 +1404,11 @@ int main (int argc, char **argv)
             inet_pton(AF_INET,client_buffer.destCanonicalIP, &ipv4addr);
             he = gethostbyaddr(&ipv4addr, sizeof ipv4addr, AF_INET);
             
-            // printf("Server name: %s\n",he->h_name);
             
-            //strcpy(serverodrvm,he->h_name);
-            
-            //            if(strcmp((he->h_name),"vm10")==0)
-            //            {
-            //                client_buffer.destination_index=10;
-            //            }
-            //
-            //            else{
-            //
-            //                strncpy(vm_string, (he->h_name) + 2,1);
-            //                //printf("\n Client VM string is %s \n",vm_string);
-            //                client_buffer.destination_index=atoi(vm_string);
-            //            }
-            
-            
+            //Loading Destination Index for each ODR
             client_buffer.destination_index=get_index(he->h_name);
-            // printf("\n Server index is %d \n",client_buffer.destination_index);
+            
+            printf("\n Server index loaded on arrival of ODR is %d \n",client_buffer.destination_index);
             
             
             
@@ -1384,78 +1416,62 @@ int main (int argc, char **argv)
             inet_pton(AF_INET,client_buffer.sourceCanonicalIP, &ipv4addr);
             he1 = gethostbyaddr(&ipv4addr, sizeof ipv4addr, AF_INET);
             
-            // printf("Client name: %s\n",he1->h_name);
             
-            //strcpy(serverodrvm,he->h_name);
-            
-            //            if(strcmp((he1->h_name),"vm10")==0)
-            //            {
-            //                client_buffer.source_index=10;
-            //            }
-            //
-            //            else{
-            //
-            //                strncpy(vm_string1, (he1->h_name) + 2,1);
-            //                //printf("\n Client VM string is %s \n",vm_string);
-            //                client_buffer.source_index=atoi(vm_string1);
-            //            }
-            
+            //Loading Source Index for each ODR
             client_buffer.source_index=get_index(he1->h_name);
             
-            // printf("\n Client index is %d \n",client_buffer.source_index);
+            printf("\n Client index loaded on arrival of ODR is %d \n",client_buffer.source_index);
             
             
-           
+            
             
             if(ptrethframehdr_rcv->datatype == RREQ)
             {
-                if(ptrethframehdr_rcv->hopCount>routing_table[client_buffer.source_index-1].number_hops && routing_table[client_buffer.source_index-1].number_hops!=0)
-                {
-                    printf("\n Inefficient path RREQ arrived. Discarding RREQ");
-                    
-                }
-                
-                else{
-                rreq(rcv_pkt_addr,buffer,packet_socket);
-                     print_ethernetframe(length);
-                    
-                }
-                
+                check_rreq(rcv_pkt_addr,buffer,packet_socket);
             }
+            
+            
             else if(ptrethframehdr_rcv->datatype == RREP)
             {
                 
-                if(routing_table[client_buffer.destination_index-1].number_hops==0 || routing_table[client_buffer.destination_index-1].number_hops>ptrethframehdr_rcv->hopCount)
+                if(routing_table[client_buffer.destination_index-1].number_hops==0 || routing_table[client_buffer.destination_index-1].number_hops>ptrethframehdr_rcv->hopCount) // Received packet has lower hopcount
                 {
+                    
+                    
                     if(client_buffer.odr_index==client_buffer.source_index)
                     {
-                         print_ethernetframe(length);
+                        //print_ethernetframe(length);
                         printf("\n $$$$$$$$ RREP received at the client ODR $$$$$$$$$$$$$ \n");
                         printf("\n Now Sending payload to server through optimized path \n");
                         
                         add_routing_table(rcv_pkt_addr,FORWARD);//Updating forward routing table at the client
                         send_payload(packet_socket);
-                        
+                        continue;
                     }
                     
-                    else
+                    else if(client_buffer.odr_index!=client_buffer.source_index)
                     {
-                         print_ethernetframe(length);
+                        //print_ethernetframe(length);
+                        
+                        printf("\n RREP arrived at odr vm%d for client vm%d and destination vm%d\n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+                        add_routing_table(rcv_pkt_addr,FORWARD);//Updating forward routing table at the client
                         relay_rrep(rcv_pkt_addr,packet_socket);
                         
                     }
                 }
                 
-                else
+                else if(routing_table[client_buffer.destination_index-1].number_hops<=ptrethframehdr_rcv->hopCount)
                 {
-                    printf("\n Less efficient path duplicate RREP received. Discarding the duplicate RREP\n");
+                    printf("\n Less efficient path duplicate RREP received. Discarding the duplicate RREP at ODR vm%d \n",client_buffer.odr_index);
                     continue;
                 }
             }
+            
+            
             else if(ptrethframehdr_rcv->datatype == DATA)
             {
-                printf("\n New Data Packet arrived \n");
-                //printf("\n Received message outside is %s \n",mesg);
+                printf("\n New Payload arrived at vm%d from client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+              
                 if(client_buffer.odr_index==client_buffer.destination_index)
                 {
                     printf("\n Payload received at the server \n");
@@ -1466,7 +1482,8 @@ int main (int argc, char **argv)
                 
                 else
                 {
-                    printf("\n Data $$$$$%s$$$$$$ Received\n",mesg);
+                    printf("\n Payload $$$$$%s$$$$$$ arrived at vm%d from client vm%d for destination vm%d \n",mesg,client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
+                     add_routing_table(rcv_pkt_addr,DATA);
                     relay_payload(rcv_pkt_addr,packet_socket);
                     
                 }

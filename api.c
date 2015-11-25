@@ -27,6 +27,7 @@ int msg_send(int sockfd, char DestCanonicalIP[], int destport, char msgtosend[],
 		if(sendbytes < 0)
 		{
 			printf("API msg_send function couldn't send data. sendto function error. %s \n", strerror(errno));
-		} 
+		}
+    
     return 0;
 }
