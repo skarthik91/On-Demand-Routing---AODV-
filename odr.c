@@ -5,13 +5,15 @@
 //constants
 #define PROTOCOL 562357
 #define SOURCEPORT 13855
-#define ODR_PATH "/tmp/jill"
-#define SERVERPATH "/tmp/jack"
+#define SERVERPORT 13854
+#define ODR_PATH "/tmp/ashana"
+#define SERVERPATH "/tmp/karthik"
 
 #define ETH_FRAME_LEN 1500
 #define RREQ 0
 #define RREP 1
 #define DATA 2
+#define TIME 3
 #define FORWARD 0
 #define REVERSE 1
 #define DATARECEIVED 10
@@ -25,7 +27,7 @@ int table_index;  // Routing table index number
 struct clientbuffer{
     
     int sockfd;
-    int serverport;
+    int port;
     int flag;
     char message[MAXLINE];
     char destCanonicalIP[MAXLINE];
@@ -67,7 +69,7 @@ void print_routingtable(int index)
     }
     printf("\n");
     printf("\n Outgoing Index : %d\n",routing_table[index].outgoing_index);
-    printf("\n ************************************************************* \n");
+   
 }
 
 
@@ -101,14 +103,15 @@ int add_routing_table(struct sockaddr_ll rcv_pkt_addr,int fwd_rev)
         
         routing_table[index].outgoing_index=rcv_pkt_addr.sll_ifindex;
         gettimeofday(&tv, NULL);
-        routing_table[index].time_stamp=tv.tv_sec*(10^6)+tv.tv_usec;
+        routing_table[index].time_stamp = (tv.tv_sec)*(10^6) + tv.tv_usec;
         
         //strftime(timebuffer,30,"%m-%d-%Y  %T.",localtime(&routing_table[index].time_stamp));
         
         
         printf("\n Routing Table - Reverse Path Construction \n");
         print_routingtable(index);
-        // printf("\n Time of adding entry to table %ld\n",tv.tv_usec);
+        printf("\n Time of adding entry to table in microsec %ld\n",routing_table[index].time_stamp);
+		printf("\n ************************************************************* \n");
         
     }
     
@@ -251,7 +254,7 @@ int prhwaddrs()
     free_hwa_info(hwahead);
 }
 
-int initialRREQ(int packet_socket,int skip_index,int forcediscovery)
+int initialRREQ(int packet_socket,int skip_index)
 {
     int j;
     struct hwa_info	*hwa, *hwahead;
@@ -291,11 +294,9 @@ int initialRREQ(int packet_socket,int skip_index,int forcediscovery)
             ptrethframehdr_send->datatype=RREQ;
             ptrethframehdr_send->broadcastID=client_buffer.broadcast;
             ptrethframehdr_send->sourceport = SOURCEPORT;
-			ptrethframehdr_send->destport = client_buffer.serverport;
+			ptrethframehdr_send->destport = client_buffer.port;
             ptrethframehdr_send->hopCount=1;
             ptrethframehdr_send->forcediscovery=client_buffer.flag;
-            
-            ptrethframehdr_send->RREPsentflag=0;
             ptrethframehdr_send->payloadlen=100;
             strcpy(ptrethframehdr_send->DestCanonicalIP,client_buffer.destCanonicalIP);
             strcpy(ptrethframehdr_send->SrcCanonicalIP,client_buffer.sourceCanonicalIP);
@@ -362,7 +363,7 @@ int initialRREQ(int packet_socket,int skip_index,int forcediscovery)
 
 }
 
-int floodRREQ(void* buffer, int packet_socket,int skip_index,int RREPsentflag)
+int floodRREQ(void* buffer, int packet_socket,int skip_index)
 {
     
     int j;
@@ -397,8 +398,7 @@ int floodRREQ(void* buffer, int packet_socket,int skip_index,int RREPsentflag)
             
             ptrethframehdr_send->hopCount=ptrethframehdr_rcv->hopCount;
             ptrethframehdr_send->hopCount++;
-            ptrethframehdr_send->RREPsentflag=RREPsentflag;
-            ptrethframehdr_send->forcediscovery=ptrethframehdr_rcv->forcediscovery;
+            
             int send_result = 0;
             
             /*other host MAC address*/
@@ -473,7 +473,7 @@ void split_buffer(char unixbuffer[])
     }
     client_buffer.sockfd = atoi(msgrcvd[0]);
     strcpy(client_buffer.destCanonicalIP ,msgrcvd[1]);
-    client_buffer.serverport = atoi(msgrcvd[2]);
+    client_buffer.port = atoi(msgrcvd[2]);
     strcpy(client_buffer.message, msgrcvd[3]);
     client_buffer.flag = atoi(msgrcvd[4]);
     
@@ -570,43 +570,8 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
     
     int skip_index=rcv_pkt_addr.sll_ifindex;
     
-    if(ptrethframehdr_rcv->forcediscovery==1)
-    {
-        printf("\n RREQ arrived with forced discovery bit set\n");
-        if(client_buffer.destination_index==client_buffer.odr_index)
-        {
-            printf(" I am the destination. Sending RREP in the forced discovery mode ");
-            add_routing_table(rcv_pkt_addr,REVERSE);
-            sendrrep(packet_socket);
-            
-            printf("\n Propogating the RREQ with RREP sent flag set");
-            floodRREQ(buffer,packet_socket,skip_index,1);
-            return 0;
-            
-        }
-        
-        else
-        {
-            printf("\nPropogating RREQ in the forced discovery mode\n");
-            add_routing_table(rcv_pkt_addr,REVERSE);
-            floodRREQ(buffer,packet_socket,skip_index, ptrethframehdr_rcv->RREPsentflag);
-            
-                
-        }
-        
-        
-        
-        
-    }
-    
- else if(ptrethframehdr_rcv->RREPsentflag==1)
-    {
-        printf("\n RREQ received with RREP already sent flag at ODR vm %d set high. Client vm%d for destination vm%d Updating routing table and discarding RREQ \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
-        add_routing_table(rcv_pkt_addr,REVERSE);
-        return 0;
-    }
     //Checking for broadcast ID
-   else if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1] || routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1]==0)
+    if(ptrethframehdr_rcv->broadcastID > routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1] || routing_table[client_buffer.destination_index-1].broadcastID[client_buffer.source_index-1]==0)
     {
         printf("\n\n New RREQ received -  Updating routing table \n\n");
         add_routing_table(rcv_pkt_addr,REVERSE);
@@ -617,9 +582,6 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
             printf("\n Route to Destination found at ODR vm%d. Sending RREP to client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
             add_routing_table(rcv_pkt_addr,REVERSE);
             sendrrep(packet_socket);
-            
-            printf("\n Propogating the RREQ with RREP sent flag set");
-            floodRREQ(buffer,packet_socket,skip_index,1);
             return 1;
         }
         
@@ -628,7 +590,7 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
         {
             printf("\n No Route found to destination. Flooding RREQ at ODR vm%d for client vm%d and destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
             add_routing_table(rcv_pkt_addr,REVERSE);
-            floodRREQ(buffer,packet_socket,skip_index, ptrethframehdr_rcv->RREPsentflag);
+            floodRREQ(buffer,packet_socket,skip_index);
             
             return 0;
         }
@@ -650,8 +612,6 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
                 printf("\n Route to Destination found at ODR vm%d. Sending RREP to client vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
                 add_routing_table(rcv_pkt_addr,REVERSE);
                 sendrrep(packet_socket);
-                printf("\n Propogating the RREQ with RREP sent flag set");
-                floodRREQ(buffer,packet_socket,skip_index,1);
                 return 1;
             }
             
@@ -660,7 +620,7 @@ int check_rreq(struct sockaddr_ll rcv_pkt_addr,void* buffer,int packet_socket)
             {
                 printf("\n No Route found to destination. Flooding RREQ at ODR vm%d for client vm%d and destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
                 add_routing_table(rcv_pkt_addr,REVERSE);
-                floodRREQ(buffer,packet_socket,skip_index,ptrethframehdr_rcv->RREPsentflag);
+                floodRREQ(buffer,packet_socket,skip_index);
                 
                 return 0;
             }
@@ -769,7 +729,7 @@ int relay_rrep(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
             ptrethframehdr_send->datatype=RREP;
             ptrethframehdr_send->broadcastID=0;
 			ptrethframehdr_send->sourceport = SOURCEPORT;
-			ptrethframehdr_send->destport = client_buffer.serverport;
+			ptrethframehdr_send->destport = client_buffer.port;
             ptrethframehdr_send->RREPsentflag=0;
             ptrethframehdr_send->hopCount=ptrethframehdr_rcv->hopCount;
             ptrethframehdr_send->hopCount++;
@@ -845,10 +805,7 @@ int relay_rrep(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
             
         }
     }
-    
-    
-    
-    
+
     return 0;
     
 }
@@ -896,7 +853,7 @@ void sendrrep(int packet_socket)
             ptrethframehdr_send->datatype=RREP;
             ptrethframehdr_send->broadcastID=0;
 			ptrethframehdr_send->sourceport = SOURCEPORT;
-			ptrethframehdr_send->destport = client_buffer.serverport;
+			ptrethframehdr_send->destport = client_buffer.port;
             ptrethframehdr_send->RREPsentflag=0;
             ptrethframehdr_send->hopCount=1;
             ptrethframehdr_send->forcediscovery=0;
@@ -965,10 +922,7 @@ void sendrrep(int packet_socket)
                 exit(1);
                 
             }
-            
-            
-            
-            
+
         }
     }
     return 0;
@@ -1035,7 +989,7 @@ int relay_payload(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
             ptrethframehdr_send->datatype=DATA;
             ptrethframehdr_send->broadcastID=0;
 			ptrethframehdr_send->sourceport = SOURCEPORT;
-			ptrethframehdr_send->destport = client_buffer.serverport;
+			ptrethframehdr_send->destport = client_buffer.port;
             ptrethframehdr_send->RREPsentflag=0;
             ptrethframehdr_send->hopCount=ptrethframehdr_rcv->hopCount;
             ptrethframehdr_send->hopCount++;
@@ -1162,7 +1116,7 @@ void send_payload(int packet_socket)
             ptrethframehdr_send->datatype=DATA;
             ptrethframehdr_send->broadcastID=0;
 			ptrethframehdr_send->sourceport = SOURCEPORT;
-			ptrethframehdr_send->destport = client_buffer.serverport;
+			ptrethframehdr_send->destport = client_buffer.port;
             ptrethframehdr_send->RREPsentflag=0;
             ptrethframehdr_send->hopCount=1;
             ptrethframehdr_send->forcediscovery=0;
@@ -1261,147 +1215,285 @@ void senddata_server(int unixdomain_socket,char serverpayload[])
   
 }
 
-
-// void senddata_client(char unixbuffer[], int packet_socket, char serverodrvm[]){
+void sendtime_client(int unixdomain_socket,char timepayload[],char sun_path[])
+{
 	
-	// int j;
-    // struct hwa_info	*hwa, *hwahead;
-    // char   *ptr;
-    // int    i;
-    // /*target address*/
-    // struct sockaddr_ll socket_address;
-    // unsigned char src_mac[6];
-    // unsigned char dest_mac[6];
+	struct sockaddr_un cliaddr;
+	int sendbytes;
+    printf("\n Payload to be sent to client %s \n",timepayload);
+    bzero(&cliaddr, sizeof(cliaddr));
+    cliaddr.sun_family = AF_LOCAL;
+    strcpy(cliaddr.sun_path, sun_path);
+	
+	socklen_t len = sizeof(struct sockaddr);
+	sendbytes = sendto(unixdomain_socket,timepayload,MAXLINE,0,(struct sockaddr*)&cliaddr,len);
+	if(sendbytes <0)
+	{
+		printf("sendto server error %d \n",errno);
+	}
+  
+}
+
+void split(char unixbuffer[]){
+	
+	char msgrcvd[5][MAXLINE];
+    int k = 0;
+    char* token = strtok(unixbuffer, "/");
     
-    // for (hwahead = hwa = Get_hw_addrs(); hwa != NULL; hwa = hwa->hwa_next)
-    // {
-        
-        // if( strcmp(hwa->if_name,"lo") != 0 && strcmp(hwa->if_name,"eth0") != 0 && hwa->if_index == routing_table[client_buffer.destination_index-1].outgoing_index)
-        // {
+    while(token != NULL) {
+        strcpy(msgrcvd[k],token);
+        k++;
+        token = strtok(NULL, "/");
+    }
+    client_buffer.sockfd = atoi(msgrcvd[0]);
+    strcpy(client_buffer.destCanonicalIP ,msgrcvd[1]);
+    client_buffer.port = atoi(msgrcvd[2]);
+    strcpy(client_buffer.message, msgrcvd[3]);
+    client_buffer.flag = atoi(msgrcvd[4]);
+    
+    
+}
+
+int relay_time(struct sockaddr_ll rcv_pkt_addr,int packet_socket)
+{
+    int j;
+    struct hwa_info	*hwa, *hwahead;
+    char   *ptr;
+    int    i;
+    /*target address*/
+    struct sockaddr_ll socket_address;
+    unsigned char src_mac[6];
+    unsigned char dest_mac[6];
+    
+    for (hwahead = hwa = Get_hw_addrs(); hwa != NULL; hwa = hwa->hwa_next)
+    {
+        if( strcmp(hwa->if_name,"lo") != 0 && strcmp(hwa->if_name,"eth0") != 0 && hwa->if_index == routing_table[client_buffer.source_index-1].outgoing_index)
+        {
             
-            // ptr = hwa->if_haddr;
-            // i = IF_HADDR;
-            // j=0;
-            // /*Loading source Mac Address*/
-            // do{
-                // src_mac[j] = *ptr++ & 0xff;
-            // } while (--i > 0 && j++ < 5);
+            ptr = hwa->if_haddr;
+            i = IF_HADDR;
+            j=0;
+            /*Loading source Mac Address*/
+            do{
+                src_mac[j] = *ptr++ & 0xff;
+            } while (--i > 0 && j++ < 5);
             
             
             
-            // /*buffer for ethernet frame*/
-            // void* buffer = (void*)malloc(ETH_FRAME_LEN);
+            /*buffer for ethernet frame*/
+            void* buffer = (void*)malloc(ETH_FRAME_LEN);
             
-            // /*pointer to ethenet header*/
+            /*pointer to ethenet header*/
             //unsigned char* etherhead = buffer;
-            // ptrethframehdr_send = buffer;
+            ptrethframehdr_send = buffer;
             
-            // /*userdata in ethernet frame*/
-            // ptrethpayload_send = (buffer + sizeof(struct Eth_Frame_Header));
+            /*userdata in ethernet frame*/
+            ptrethpayload_send = (buffer + sizeof(struct Eth_Frame_Header));
             
             //Loading values to ethernet header
-            // ptrethframehdr_send->packettyped=htons(PROTOCOL);
-            // ptrethframehdr_send->datatype=DATA;
-            // ptrethframehdr_send->broadcastID=0;
-			// ptrethframehdr_send->sourceport = SOURCEPORT;
-			// ptrethframehdr_send->destport = client_buffer.serverport;
-            // ptrethframehdr_send->RREPsentflag=0;
-            // ptrethframehdr_send->hopCount=1;
-            // ptrethframehdr_send->forcediscovery=0;
-            // ptrethframehdr_send->payloadlen=100;
-            // strcpy(ptrethframehdr_send->DestCanonicalIP,client_buffer.destCanonicalIP);
-            // strcpy(ptrethframehdr_send->SrcCanonicalIP,client_buffer.sourceCanonicalIP);
+            ptrethframehdr_send->packettyped=htons(PROTOCOL);
+            ptrethframehdr_send->datatype=TIME;
+            ptrethframehdr_send->broadcastID=0;
+			ptrethframehdr_send->sourceport = SOURCEPORT;
+			ptrethframehdr_send->destport = SERVERPORT;
+            ptrethframehdr_send->RREPsentflag=0;
+            ptrethframehdr_send->hopCount=ptrethframehdr_rcv->hopCount;
+            ptrethframehdr_send->hopCount++;
+            ptrethframehdr_send->forcediscovery=0;
+            ptrethframehdr_send->payloadlen=100;
+            strcpy(ptrethframehdr_send->DestCanonicalIP,client_buffer.destCanonicalIP);
+            strcpy(ptrethframehdr_send->SrcCanonicalIP,client_buffer.sourceCanonicalIP);
             
-            // int send_result = 0;
-            
-            
-            // /*other host MAC address*/
-            
-            // dest_mac[0]  = routing_table[client_buffer.destination_index-1].next_hop[0] & 0xff;
-            // dest_mac[1]  = routing_table[client_buffer.destination_index-1].next_hop[1] & 0xff;
-            // dest_mac[2]  = routing_table[client_buffer.destination_index-1].next_hop[2] & 0xff;
-            // dest_mac[3]  = routing_table[client_buffer.destination_index-1].next_hop[3] & 0xff;
-            // dest_mac[4]  = routing_table[client_buffer.destination_index-1].next_hop[4] & 0xff;
-            // dest_mac[5]  = routing_table[client_buffer.destination_index-1].next_hop[5] & 0xff;
-            // /*MAC - end*/
-            
-            // /*RAW communication*/
-            // socket_address.sll_family   = PF_PACKET;
-            // /*we don't use a protocoll above ethernet layer
-             // ->just use anything here*/
-            // socket_address.sll_protocol = htons(PROTOCOL);
-            
-            // /*index of the network device
-             // see full code later how to retrieve it*/
-            // socket_address.sll_ifindex  = hwa->if_index;
-            
-            // /*ARP hardware identifier is ethernet*/
-            // socket_address.sll_hatype   = ARPHRD_ETHER;
-            
-            // /*target is another host*/
-            // socket_address.sll_pkttype  = PACKET_OTHERHOST;
-            
-            // /*address length*/
-            // socket_address.sll_halen    = ETH_ALEN;
+            int send_result = 0;
             
             
+            /*other host MAC address*/
             
-            // /*Loading - Next Hop Address*/
-            // socket_address.sll_addr[0]  = routing_table[client_buffer.destination_index-1].next_hop[0] & 0xff;
-            // socket_address.sll_addr[1]  = routing_table[client_buffer.destination_index-1].next_hop[1] & 0xff;
-            // socket_address.sll_addr[2]  = routing_table[client_buffer.destination_index-1].next_hop[2] & 0xff;
-            // socket_address.sll_addr[3]  = routing_table[client_buffer.destination_index-1].next_hop[3] & 0xff;
-            // socket_address.sll_addr[4]  = routing_table[client_buffer.destination_index-1].next_hop[4] & 0xff;
-            // socket_address.sll_addr[5]  = routing_table[client_buffer.destination_index-1].next_hop[5] & 0xff;
-            // /*MAC - end*/
-            // socket_address.sll_addr[6]  = 0x00;/*not used*/
-            // socket_address.sll_addr[7]  = 0x00;/*not used*/
+            dest_mac[0]  = routing_table[client_buffer.source_index-1].next_hop[0] & 0xff;
+            dest_mac[1]  = routing_table[client_buffer.source_index-1].next_hop[1] & 0xff;
+            dest_mac[2]  = routing_table[client_buffer.source_index-1].next_hop[2] & 0xff;
+            dest_mac[3]  = routing_table[client_buffer.source_index-1].next_hop[3] & 0xff;
+            dest_mac[4]  = routing_table[client_buffer.source_index-1].next_hop[4] & 0xff;
+            dest_mac[5]  = routing_table[client_buffer.source_index-1].next_hop[5] & 0xff;
+            /*MAC - end*/
+            
+            /*RAW communication*/
+            socket_address.sll_family   = PF_PACKET;
+            /*we don't use a protocoll above ethernet layer
+             ->just use anything here*/
+            socket_address.sll_protocol = htons(PROTOCOL);
+            
+            /*index of the network device
+             see full code later how to retrieve it*/
+            socket_address.sll_ifindex  = hwa->if_index;
+            
+            /*ARP hardware identifier is ethernet*/
+            socket_address.sll_hatype   = ARPHRD_ETHER;
+            
+            /*target is another host*/
+            socket_address.sll_pkttype  = PACKET_OTHERHOST;
+            
+            /*address length*/
+            socket_address.sll_halen    = ETH_ALEN;
             
             
-            // /*set the frame header*/
-            // memcpy((void*)buffer, (void*)dest_mac, ETH_ALEN);
-            // memcpy((void*)(buffer+ETH_ALEN), (void*)src_mac, ETH_ALEN);
             
-            // strcpy(ptrethpayload_send->payload,client_buffer.message);
-            // printf("$$$$$\n\n Sending Initial Buffer\n\n");
-            // printf("\n Sending intial Data : %s \n",ptrethpayload_send->payload);
-            // /*send the packet*/
-            // send_result = sendto(packet_socket, buffer, ETH_FRAME_LEN, 0,
-                                 // (struct sockaddr*)&socket_address, sizeof(socket_address));
-            // if (send_result == -1) {
-                // printf("\n Sending error : %d \n",errno);
-                // exit(1);
+            /*Loading - Next Hop Address*/
+            socket_address.sll_addr[0]  = routing_table[client_buffer.source_index-1].next_hop[0] & 0xff;
+            socket_address.sll_addr[1]  = routing_table[client_buffer.source_index-1].next_hop[1] & 0xff;
+            socket_address.sll_addr[2]  = routing_table[client_buffer.source_index-1].next_hop[2] & 0xff;
+            socket_address.sll_addr[3]  = routing_table[client_buffer.source_index-1].next_hop[3] & 0xff;
+            socket_address.sll_addr[4]  = routing_table[client_buffer.source_index-1].next_hop[4] & 0xff;
+            socket_address.sll_addr[5]  = routing_table[client_buffer.source_index-1].next_hop[5] & 0xff;
+            /*MAC - end*/
+            socket_address.sll_addr[6]  = 0x00;/*not used*/
+            socket_address.sll_addr[7]  = 0x00;/*not used*/
+            
+            
+            /*set the frame header*/
+            memcpy((void*)buffer, (void*)dest_mac, ETH_ALEN);
+            memcpy((void*)(buffer+ETH_ALEN), (void*)src_mac, ETH_ALEN);
+            
+            strcpy(ptrethpayload_send->payload,client_buffer.message);
+            add_routing_table(rcv_pkt_addr,FORWARD);
+            printf("Relaying time for client index vm%d from destination index vm%d at odr index vm %d message : %s\n",client_buffer.source_index,client_buffer.destination_index,client_buffer.odr_index,ptrethpayload_send->payload);
+            /*send the packet*/
+            send_result = sendto(packet_socket, buffer, ETH_FRAME_LEN, 0,
+                                 (struct sockaddr*)&socket_address, sizeof(socket_address));
+            if (send_result == -1) {
+                printf("Sending error : %d",errno);
+                exit(1);
                 
-            // }
+            }
             
-        // }
-    // }
-	
-// }
-int check_stale(float stalenessT_out)
-{
-    
-    struct timeval tv1;
-    time_t time_now;
-    
-    gettimeofday(&tv1, NULL);
-    time_now=tv1.tv_sec*(10^6)+tv1.tv_usec;
-    
-    
-    
-    printf("\n Checking for staleness\n");
-    
-    if((time_now-stalenessT_out*(10^6))>=routing_table[client_buffer.destination_index-1].time_stamp) // Route is stale
-    {
-        return 1;
+            
+            
+            
+        }
     }
 
-    else
-    {
-        return 0; //Route not stale
-    }
-
+    return 0;
+    
 }
+
+void send_time(int packet_socket)
+{
+	
+	int j;
+    struct hwa_info	*hwa, *hwahead;
+    char   *ptr;
+    int    i;
+    /*target address*/
+    struct sockaddr_ll socket_address;
+    unsigned char src_mac[6];
+    unsigned char dest_mac[6];
+    
+    for (hwahead = hwa = Get_hw_addrs(); hwa != NULL; hwa = hwa->hwa_next)
+    {
+        
+        if( strcmp(hwa->if_name,"lo") != 0 && strcmp(hwa->if_name,"eth0") != 0 && hwa->if_index == routing_table[client_buffer.source_index-1].outgoing_index)
+        {
+            
+            ptr = hwa->if_haddr;
+            i = IF_HADDR;
+            j=0;
+            /*Loading source Mac Address*/
+            do{
+                src_mac[j] = *ptr++ & 0xff;
+            } while (--i > 0 && j++ < 5);
+            
+            
+            
+            /*buffer for ethernet frame*/
+            void* buffer = (void*)malloc(ETH_FRAME_LEN);
+            
+            /*pointer to ethenet header*/
+            //unsigned char* etherhead = buffer;
+            ptrethframehdr_send = buffer;
+            
+            /*userdata in ethernet frame*/
+            ptrethpayload_send = (buffer + sizeof(struct Eth_Frame_Header));
+            
+            //Loading values to ethernet header
+            ptrethframehdr_send->packettyped=htons(PROTOCOL);
+            ptrethframehdr_send->datatype=TIME;
+            ptrethframehdr_send->broadcastID=0;
+			ptrethframehdr_send->sourceport = SOURCEPORT;
+			ptrethframehdr_send->destport = SERVERPORT;
+            ptrethframehdr_send->RREPsentflag=0;
+            ptrethframehdr_send->hopCount=1;
+            ptrethframehdr_send->forcediscovery=0;
+            ptrethframehdr_send->payloadlen=100;
+            strcpy(ptrethframehdr_send->DestCanonicalIP,client_buffer.destCanonicalIP);
+            strcpy(ptrethframehdr_send->SrcCanonicalIP,client_buffer.sourceCanonicalIP);
+            
+            int send_result = 0;
+            
+            
+            /*other host MAC address*/
+            
+            dest_mac[0]  = routing_table[client_buffer.source_index-1].next_hop[0] & 0xff;
+            dest_mac[1]  = routing_table[client_buffer.source_index-1].next_hop[1] & 0xff;
+            dest_mac[2]  = routing_table[client_buffer.source_index-1].next_hop[2] & 0xff;
+            dest_mac[3]  = routing_table[client_buffer.source_index-1].next_hop[3] & 0xff;
+            dest_mac[4]  = routing_table[client_buffer.source_index-1].next_hop[4] & 0xff;
+            dest_mac[5]  = routing_table[client_buffer.source_index-1].next_hop[5] & 0xff;
+            /*MAC - end*/
+            
+            /*RAW communication*/
+            socket_address.sll_family   = PF_PACKET;
+            /*we don't use a protocoll above ethernet layer
+             ->just use anything here*/
+            socket_address.sll_protocol = htons(PROTOCOL);
+            
+            /*index of the network device
+             see full code later how to retrieve it*/
+            socket_address.sll_ifindex  = hwa->if_index;
+            
+            /*ARP hardware identifier is ethernet*/
+            socket_address.sll_hatype   = ARPHRD_ETHER;
+            
+            /*target is another host*/
+            socket_address.sll_pkttype  = PACKET_OTHERHOST;
+            
+            /*address length*/
+            socket_address.sll_halen    = ETH_ALEN;
+            
+            
+            
+            /*Loading - Next Hop Address*/
+            socket_address.sll_addr[0]  = routing_table[client_buffer.source_index-1].next_hop[0] & 0xff;
+            socket_address.sll_addr[1]  = routing_table[client_buffer.source_index-1].next_hop[1] & 0xff;
+            socket_address.sll_addr[2]  = routing_table[client_buffer.source_index-1].next_hop[2] & 0xff;
+            socket_address.sll_addr[3]  = routing_table[client_buffer.source_index-1].next_hop[3] & 0xff;
+            socket_address.sll_addr[4]  = routing_table[client_buffer.source_index-1].next_hop[4] & 0xff;
+            socket_address.sll_addr[5]  = routing_table[client_buffer.source_index-1].next_hop[5] & 0xff;
+            /*MAC - end*/
+            socket_address.sll_addr[6]  = 0x00;/*not used*/
+            socket_address.sll_addr[7]  = 0x00;/*not used*/
+            
+            
+            /*set the frame header*/
+            memcpy((void*)buffer, (void*)dest_mac, ETH_ALEN);
+            memcpy((void*)(buffer+ETH_ALEN), (void*)src_mac, ETH_ALEN);
+            
+            strcpy(ptrethpayload_send->payload,client_buffer.message);
+            
+            printf("Sending Time Reply From Destination Odr: %s\n",ptrethpayload_send->payload);
+            /*send the packet*/
+            send_result = sendto(packet_socket, buffer, ETH_FRAME_LEN, 0,
+                                 (struct sockaddr*)&socket_address, sizeof(socket_address));
+            if (send_result == -1) {
+                printf("Sending error : %d",errno);
+                exit(1);
+                
+            }
+
+        }
+    }
+    return 0;
+ }
+
 
 int main (int argc, char **argv)
 {
@@ -1420,6 +1512,7 @@ int main (int argc, char **argv)
     void* buffer;
     char temp_string1[4],temp_string2[4];
     char serverpayload[MAXLINE];
+	char timepayload[MAXLINE];
     char odrvm1[5];
     
     
@@ -1487,17 +1580,15 @@ int main (int argc, char **argv)
             {
                 printf("error in receiving from unix domain socket\n");
             }
-			printf("sun path is %s \n" ,cliaddr.sun_path);
+			
 			if(strcmp(cliaddr.sun_path,SERVERPATH)==0){
 				printf("received data from server %s \n" , unixbuffer);
 				gethostname(serverodrvm, sizeof serverodrvm);
-				printf("\n serverodrvm: %s\n", serverodrvm);
-				exit(1);
-				//senddata_client(unixbuffer,packet_socket,serverodrvm);
+				split(unixbuffer);
+				send_time(packet_socket);
 				
 			} 
 			else{
-			
 				printf("received data from client %s \n" , unixbuffer);
 				client_buffer.broadcast++;
 				memset(clientodrvm,0,sizeof(clientodrvm));
@@ -1520,43 +1611,25 @@ int main (int argc, char **argv)
 				
 				
 				split_buffer(unixbuffer); // Function to split the buffer
-                
-                
 				
 				if(client_buffer.sourceCanonicalIP==client_buffer.destCanonicalIP)
 				{
 					printf(" \n Client is the destination. The buffer is %s",client_buffer.message);
 					continue;
 				}
-                
-                else if(client_buffer.flag==1) //Forced Rediscovery mode
-                {
-                    printf("\n Forced rediscovery mode \n Flooding RREQ on all interfaces to perform route rediscovery \n");
-                    initialRREQ(packet_socket,-10,client_buffer.flag);
-                    
-                }
 				
-				else if(strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)==0)
+				if(strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)==0)
 				{
-                    if(check_stale(stalenessT_out)==1) // Checking for staleness.
-                    {
-                        printf("\n Route found but stale. Flooding RREQ on all interfaces to perform route discovery \n");
-                        initialRREQ(packet_socket,-10,client_buffer.flag);
-                    }
-                    
-                    else if(check_stale(stalenessT_out)==0)
-                    {
-					printf("\n Route Found and not stale. Route Discovery not required. Sending Payload\n");
+					printf("\n Route Found. Route Discovery not required. Sending Payload\n");
 					send_payload(packet_socket);
 					continue;
-                    }
 					
 				}
 				
 				else if (strcmp(routing_table[client_buffer.destination_index-1].destination_IP,client_buffer.destCanonicalIP)!=0)
 				{
-					printf("\n No Route found to destination. Flooding RREQ on all interfaces to perform route discovery \n");
-					initialRREQ(packet_socket,-10,client_buffer.flag);
+					printf("\n No Route found to destination. Flooding RREQ on all interfaces \n");
+					initialRREQ(packet_socket,-10);
 				}
             
 			
@@ -1698,8 +1771,36 @@ int main (int argc, char **argv)
                 else
                 {
                     printf("\n Payload $$$$$%s$$$$$$ arrived at vm%d from client vm%d for destination vm%d \n",mesg,client_buffer.odr_index,client_buffer.source_index,client_buffer.destination_index);
-                     add_routing_table(rcv_pkt_addr,DATA);
+                    add_routing_table(rcv_pkt_addr,DATA);
                     relay_payload(rcv_pkt_addr,packet_socket);
+                    
+                }
+            }
+			
+			else if(ptrethframehdr_rcv->datatype == TIME)
+            {
+                printf("\n Time Data arrived at vm%d from server vm%d for destination vm%d \n",client_buffer.odr_index,client_buffer.source_index,client_buffer.source_index);
+              
+                if(client_buffer.odr_index==client_buffer.source_index)
+                {
+                    printf("\n Payload received at the client odr\n");
+                    printf("\n Received message %s \n",mesg);
+                    snprintf(timepayload, sizeof(timepayload), "%d / %s / %d / %s  / %d / %d / %d / %s", 
+					ptrethframehdr_rcv->datatype,
+					ptrethframehdr_rcv->SrcCanonicalIP,
+					ptrethframehdr_rcv->sourceport,
+					ptrethframehdr_rcv->DestCanonicalIP,
+					ptrethframehdr_rcv->destport,
+					ptrethframehdr_rcv->hopCount,
+					ptrethframehdr_rcv->payloadlen,
+					ptrethpayload_rcv->payload);
+					sendtime_client(unixdomain_socket,timepayload,cliaddr.sun_path);
+                }
+                
+                else
+                {
+                    printf("\n Time %s arrived at vm%d from server vm%d for destination vm%d \n",mesg,client_buffer.odr_index,client_buffer.destination_index,client_buffer.source_index);
+                    relay_time(rcv_pkt_addr,packet_socket);
                     
                 }
             }

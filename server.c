@@ -1,7 +1,7 @@
 #include "hw_addrs.h"
  
-#define SERVERPATH "/tmp/jack"
-#define ODR_PATH "/tmp/jill"
+#define SERVERPATH "/tmp/karthik"
+#define ODR_PATH "/tmp/ashana"
 
 int msg_rcv(int sockfd,char messagercvd[],char ClientCanonicalIP[],int *port)
 {
@@ -19,16 +19,20 @@ int msg_rcv(int sockfd,char messagercvd[],char ClientCanonicalIP[],int *port)
 		return 0;
     }else{
 		printf("Message Received from client is %s \n",buffer);
+		printf("Buffer Received \n");
 		char* token = strtok(buffer, " ");
 		while(token != NULL) {
         strcpy(msgrcvd[k],token);
         k++;
         token = strtok(NULL, " ");
 		}
+		printf("message from client : %s \n",msgrcvd[7]);
+		printf("client canonical ip : %s \n",msgrcvd[1]);
+		printf("port : %s \n",msgrcvd[2]);
 		strcpy(messagercvd,msgrcvd[7]);
 		strcpy(ClientCanonicalIP,msgrcvd[1]);
-		printf("port %s \n",msgrcvd[2]);
 		*port = atoi(msgrcvd[2]);
+	
 		
 		return 1;
 	}
